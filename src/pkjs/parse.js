@@ -139,6 +139,132 @@ function buildTopicsPayload(stats, opts) {
   return out.join(REC);
 }
 
+// ---------------------------------------------------------------------------
+// "In theaters near me": GPS -> SerpApi google_maps cinemas -> google showtimes.
+// The cinema filter and geo helpers are copied from PebbleMovieTimes/parse.js -
+// looksLikeCinema in particular is load-bearing (SerpApi returns A/V installers
+// and playhouses for "movie theater").
+// ---------------------------------------------------------------------------
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  var R = 6371;
+  var dLat = (lat2 - lat1) * Math.PI / 180;
+  var dLon = (lon2 - lon1) * Math.PI / 180;
+  var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+var CINEMA_NAME_RE = /\b(cinemas?|cineplex|multiplex|megaplex|movie theat(re|er))\b/i;
+var CHAIN_RE = /\b(amc|regal|cinemark|cinepolis|cin[eé]polis|megaplex|marcus|harkins|showcase|odeon|vue|picturehouse|alamo drafthouse|landmark|ipic|studio movie grill|emagine|maya cinemas|bow tie|reading cinemas|cmx|malco|santikos|violet crown|fat ?cats|look dine-in)\b/i;
+var NOT_CINEMA_RE = /amphitheat|performing arts|concert|live music|playhouse|opera|symphony|orchestra|philharmon|ballet|stadium|\barena\b|fairground|convention center|community theat|dinner theat|repertory|shakespear|children'?s theat|black box|little theat|\btheat(re|er) (compan|troupe|guild)|\bplayers\b|civic (center|theat)|manufacturer|production (service|compan)|installation|home cinema|audio.?visual|integrator|\bequipment\b|\brental\b|contractor/i;
+var CINEMA_TYPE_RE = /^movie theater$|drive-?in theater/i;
+
+function looksLikeCinema(name, type) {
+  name = String(name || '').trim();
+  type = String(type || '').trim();
+  if (name.length < 4) return false;
+  if (NOT_CINEMA_RE.test(name) || NOT_CINEMA_RE.test(type)) return false;
+  if (CINEMA_TYPE_RE.test(type)) return true;
+  if (type) return CHAIN_RE.test(name);
+  return CINEMA_NAME_RE.test(name) || CHAIN_RE.test(name);
+}
+
+// SerpApi google_maps data -> [{ name, lat, lon }]
+function extractTheaters(data) {
+  var raw = [];
+  if (data && data.local_results && data.local_results.length) raw = data.local_results;
+  else if (data && data.place_results) raw = [data.place_results];
+
+  var list = [];
+  for (var i = 0; i < raw.length; i++) {
+    var r = raw[i];
+    if (!r || !r.title) continue;
+    var type = r.type || (r.types && r.types.join(' ')) || '';
+    if (!looksLikeCinema(r.title, type)) continue;
+    var g = r.gps_coordinates || {};
+    list.push({
+      name: r.title,
+      lat: (g.latitude != null) ? g.latitude : null,
+      lon: (g.longitude != null) ? g.longitude : null,
+    });
+  }
+  return list;
+}
+
+// SerpApi google (showtimes box) data -> ["Movie name", ...] for today (or the
+// first day listed). Titles only - we don't need the showtimes themselves.
+function extractMovieTitles(data) {
+  var blocks = (data && data.showtimes) ||
+    (data && data.answer_box && data.answer_box.showtimes) ||
+    (data && data.knowledge_graph && data.knowledge_graph.showtimes) || null;
+  if (!blocks || !blocks.length) return [];
+
+  var block = null;
+  for (var i = 0; i < blocks.length; i++) {
+    if (blocks[i].movies && blocks[i].movies.length) {
+      if (!block) block = blocks[i];
+      if (/today/i.test(blocks[i].day || '')) { block = blocks[i]; break; }
+    }
+  }
+  if (!block) return [];
+
+  var out = [];
+  for (var m = 0; m < block.movies.length; m++) {
+    var name = block.movies[m] && block.movies[m].name;
+    if (name) out.push(sanitize(name));
+  }
+  return out;
+}
+
+// Merge arrays of title strings, case-insensitive de-dupe, keep first-seen
+// order, cap the count.
+function dedupeTitles(lists, max) {
+  max = max || 12;
+  var seen = {};
+  var out = [];
+  for (var i = 0; i < (lists || []).length; i++) {
+    var arr = lists[i] || [];
+    for (var j = 0; j < arr.length && out.length < max; j++) {
+      var title = sanitize(arr[j]);
+      var key = title.toLowerCase();
+      if (!title || seen[key]) continue;
+      seen[key] = true;
+      out.push(title);
+    }
+  }
+  return out;
+}
+
+// [title, ...] -> "0 \x1f title \x1f "" \x1f "In theaters"" records. id 0 tells
+// the watch to reach the title via a search rather than a media fetch.
+function buildTheatersPayload(titles) {
+  var out = [];
+  for (var i = 0; i < (titles || []).length; i++) {
+    var t = sanitize(titles[i]).slice(0, 54);
+    if (t) out.push(['0', t, '', 'In theaters'].join(FLD));
+  }
+  return out.join(REC);
+}
+
+// BigDataCloud reverse geocode -> "City, Region, Country" or null
+function locationString(data) {
+  if (!data) return null;
+  var parts = [];
+  var city = data.city || data.locality;
+  if (!city && data.localityInfo && data.localityInfo.administrative) {
+    var admin = data.localityInfo.administrative;
+    if (admin[3] && admin[3].name) city = admin[3].name;
+  }
+  if (city) parts.push(city);
+  if (data.principalSubdivision) parts.push(data.principalSubdivision);
+  var country = data.countryName;
+  if (country === 'United States of America' || country === 'USA') country = 'United States';
+  if (country) parts.push(country);
+  return parts.length ? parts.join(', ') : null;
+}
+
 module.exports = {
   sanitize: sanitize,
   clamp: clamp,
@@ -150,4 +276,11 @@ module.exports = {
   buildResultsPayload: buildResultsPayload,
   buildRecentsPayload: buildRecentsPayload,
   buildTopicsPayload: buildTopicsPayload,
+  haversineKm: haversineKm,
+  looksLikeCinema: looksLikeCinema,
+  extractTheaters: extractTheaters,
+  extractMovieTitles: extractMovieTitles,
+  dedupeTitles: dedupeTitles,
+  buildTheatersPayload: buildTheatersPayload,
+  locationString: locationString,
 };

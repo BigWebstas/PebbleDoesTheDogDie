@@ -6,6 +6,8 @@ straight from your wrist, backed by the crowd database at
 
 - **Voice search.** Press select, say a title. Watches with no microphone type
   the title on the phone settings page instead.
+- **In theaters near me.** GPS finds nearby cinemas and lists today's movies;
+  tap one to see its triggers. Needs a free SerpApi key.
 - **Trigger list.** Every tracked trigger for the title with the crowd's
   verdict — **Yes** / **No** / **Unclear** — and the vote tally. On colour
   watches a "yes" is tinted red, a "no" green.
@@ -21,6 +23,8 @@ Runs on every Pebble platform: aplite, basalt, chalk, diorite, emery, gabbro.
 2. Open the app's settings in the Pebble phone app.
 3. Make a free account at [doesthedogdie.com](https://www.doesthedogdie.com) and
    paste the API key from your profile page.
+4. Optional, for "In theaters near me": paste a free
+   [SerpApi](https://serpapi.com/manage-api-key) key (100 searches/month).
 
 ## Build
 

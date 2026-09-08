@@ -22,7 +22,8 @@
       "watchface": false
     },
     "capabilities": [
-      "configurable"
+      "configurable",
+      "location"
     ],
     "messageKeys": [
       "REQUEST",

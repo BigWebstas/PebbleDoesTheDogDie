@@ -70,12 +70,20 @@ static void draw_row(GContext *gctx, const Layer *cell_layer, MenuIndex *idx, vo
 
 static void select_row(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   if (!is_list_ready()) {
-    if (g_state == STATE_ERROR && g_query[0]) request_search(g_query);
+    if (g_state == STATE_ERROR && g_query[0]) {
+      if (strcmp(g_query, THEATERS_QUERY) == 0) request_theaters();
+      else request_search(g_query);
+    }
     return;
   }
   Result *item = &g_results[idx->row];
-  request_media(item->id, item->name);
-  topics_window_push();
+  if (item->id == 0) {
+    // An "in theaters" movie - no DDD id yet, so search by title.
+    request_search(item->name);
+  } else {
+    request_media(item->id, item->name);
+    topics_window_push();
+  }
 }
 
 static void window_load(Window *window) {

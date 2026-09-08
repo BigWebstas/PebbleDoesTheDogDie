@@ -251,6 +251,25 @@ void request_recents(void) {
   app_message_outbox_send();
 }
 
+// Ask the phone for the movies playing at nearby cinemas. The reply is a
+// normal RESULTS message whose records carry id 0 - picking one runs a
+// title search (see results_window.c).
+void request_theaters(void) {
+  strncpy(g_query, THEATERS_QUERY, sizeof(g_query) - 1);
+  g_query[sizeof(g_query) - 1] = '\0';
+  g_state = STATE_LOADING_SEARCH;
+  g_error_msg[0] = '\0';
+  g_results_count = 0;
+  results_window_reload();
+
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_REQUEST, "theaters");
+  dict_write_int32(out, MESSAGE_KEY_FORCE, 0);
+  app_message_outbox_send();
+  watchdog_start();
+}
+
 // ---------------------------------------------------------------------------
 // Dictation (voice search). Compiled to a no-op where there is no microphone.
 // ---------------------------------------------------------------------------

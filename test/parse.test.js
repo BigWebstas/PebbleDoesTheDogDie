@@ -123,4 +123,44 @@ t('buildTopicsPayload: caps rows and clamps the comment', function () {
   assert.ok(recs[0].split(FLD)[4].length <= 120, 'comment clamped');
 });
 
+// --- in theaters near me -----------------------------------------------
+t('looksLikeCinema keeps real cinemas, drops venues and A/V shops', function () {
+  assert.ok(P.looksLikeCinema('AMC Empire 25', 'Movie theater'));
+  assert.ok(P.looksLikeCinema('Alamo Drafthouse Cinema', ''));
+  assert.ok(!P.looksLikeCinema('Radio City Music Hall', 'Concert hall'));
+  assert.ok(!P.looksLikeCinema('Bob\'s Home Theater Installation', 'Audio visual equipment supplier'));
+});
+t('extractTheaters filters and keeps coordinates', function () {
+  var data = { local_results: [
+    { title: 'Regal Union Square', type: 'Movie theater',
+      gps_coordinates: { latitude: 40.735, longitude: -73.991 } },
+    { title: 'The Town Hall', type: 'Auditorium' },
+    { position: 2 },
+  ] };
+  var list = P.extractTheaters(data);
+  assert.strictEqual(list.length, 1);
+  assert.strictEqual(list[0].name, 'Regal Union Square');
+  assert.strictEqual(list[0].lat, 40.735);
+});
+t('extractMovieTitles reads the today block', function () {
+  var data = { showtimes: [
+    { day: 'Tomorrow', movies: [{ name: 'Old Movie' }] },
+    { day: 'Today', movies: [{ name: 'Dune: Part Two' }, { name: 'Kung Fu Panda 4' }] },
+  ] };
+  assert.deepStrictEqual(P.extractMovieTitles(data), ['Dune: Part Two', 'Kung Fu Panda 4']);
+});
+t('extractMovieTitles returns [] when there is no showtimes box', function () {
+  assert.deepStrictEqual(P.extractMovieTitles({ organic_results: [] }), []);
+});
+t('dedupeTitles merges, de-dupes case-insensitively, caps, keeps order', function () {
+  var out = P.dedupeTitles([['Dune', 'Godzilla'], ['dune', 'Wicked', 'Godzilla', 'Moana 2']], 3);
+  assert.deepStrictEqual(out, ['Dune', 'Godzilla', 'Wicked']);
+});
+t('buildTheatersPayload emits zero-id records', function () {
+  var payload = P.buildTheatersPayload(['Dune: Part Two', 'Wicked']);
+  var recs = payload.split(REC);
+  assert.strictEqual(recs.length, 2);
+  assert.deepStrictEqual(recs[0].split(FLD), ['0', 'Dune: Part Two', '', 'In theaters']);
+});
+
 console.log('\n' + pass + ' passing');

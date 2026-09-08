@@ -16,9 +16,13 @@ static const char *VOICE_TITLE = "Search from phone";
 static const char *VOICE_SUB   = "This watch has no mic - use the app settings";
 #endif
 
-// Row 0 is always the "search" action. Rows 1.. are recent titles.
+// Row 0 = voice search, row 1 = "in theaters near me", rows 2.. = recent titles.
+#define ROW_VOICE     0
+#define ROW_THEATERS  1
+#define ROW_RECENT_0  2
+
 static uint16_t get_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
-  return 1 + g_recents_count;
+  return ROW_RECENT_0 + g_recents_count;
 }
 
 static int16_t get_cell_height(struct MenuLayer *menu, MenuIndex *idx, void *ctx) {
@@ -30,12 +34,17 @@ static int16_t get_cell_height(struct MenuLayer *menu, MenuIndex *idx, void *ctx
 }
 
 static void draw_row(GContext *gctx, const Layer *cell_layer, MenuIndex *idx, void *ctx) {
-  if (idx->row == 0) {
+  if (idx->row == ROW_VOICE) {
     menu_cell_basic_draw(gctx, cell_layer, VOICE_TITLE, VOICE_SUB, NULL);
     return;
   }
+  if (idx->row == ROW_THEATERS) {
+    menu_cell_basic_draw(gctx, cell_layer, "In theaters near me",
+                         "Today's movies nearby", NULL);
+    return;
+  }
 
-  int r = idx->row - 1;
+  int r = idx->row - ROW_RECENT_0;
   if (r >= g_recents_count) return;
   Result *item = &g_recents[r];
 
@@ -50,16 +59,8 @@ static void draw_row(GContext *gctx, const Layer *cell_layer, MenuIndex *idx, vo
   menu_cell_basic_draw(gctx, cell_layer, item->name, subtitle[0] ? subtitle : NULL, NULL);
 }
 
-static int16_t get_header_height(struct MenuLayer *menu, uint16_t section, void *ctx) {
-  return g_recents_count ? MENU_CELL_BASIC_HEADER_HEIGHT : 0;
-}
-
-static void draw_header(GContext *gctx, const Layer *cell_layer, uint16_t section, void *ctx) {
-  if (g_recents_count) menu_cell_basic_header_draw(gctx, cell_layer, "Recent");
-}
-
 static void select_row(MenuLayer *menu, MenuIndex *idx, void *ctx) {
-  if (idx->row == 0) {
+  if (idx->row == ROW_VOICE) {
 #if defined(PBL_MICROPHONE)
     dictation_start();
 #else
@@ -67,7 +68,12 @@ static void select_row(MenuLayer *menu, MenuIndex *idx, void *ctx) {
 #endif
     return;
   }
-  int r = idx->row - 1;
+  if (idx->row == ROW_THEATERS) {
+    request_theaters();
+    results_window_push();
+    return;
+  }
+  int r = idx->row - ROW_RECENT_0;
   if (r >= g_recents_count) return;
   request_media(g_recents[r].id, g_recents[r].name);
   topics_window_push();
@@ -122,8 +128,6 @@ static void window_load(Window *window) {
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks) {
     .get_num_rows = get_num_rows,
     .get_cell_height = get_cell_height,
-    .get_header_height = get_header_height,
-    .draw_header = draw_header,
     .draw_row = draw_row,
     .select_click = select_row,
   });

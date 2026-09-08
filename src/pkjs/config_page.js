@@ -55,6 +55,15 @@ function buildConfigPage(settings) {
     '</div>' +
 
     '<div class="card">' +
+    '<label>SerpApi key</label>' +
+    '<div class="hint">Optional. Powers the "In theaters near me" list. Free key ' +
+    'at <a href="https://serpapi.com/manage-api-key">serpapi.com</a> ' +
+    '(100 searches/month; the list spends ~3 per refresh, cached 6h).</div>' +
+    '<input type="text" id="serp" autocapitalize="off" autocorrect="off" spellcheck="false" ' +
+    'placeholder="Paste SerpApi key" value="' + esc(s.serpApiKey) + '">' +
+    '</div>' +
+
+    '<div class="card">' +
     '<label>Search a title</label>' +
     '<div class="hint">For watches with no microphone. Type a movie, show, book or ' +
     'game and the results open on your watch when you save.</div>' +
@@ -79,6 +88,7 @@ function buildConfigPage(settings) {
     '</div><script>' +
     'document.getElementById("save").addEventListener("click",function(){' +
     'var out={apiKey:document.getElementById("key").value.trim(),' +
+    'serpApiKey:document.getElementById("serp").value.trim(),' +
     'search:document.getElementById("search").value.trim(),' +
     'hideSpoilers:document.getElementById("spoil").checked,' +
     'hideSensitive:document.getElementById("sens").checked,' +

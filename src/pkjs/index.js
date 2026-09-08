@@ -24,7 +24,7 @@ var state = { lastSearchAt: 0 };
 // ---------------------------------------------------------------------------
 
 function loadSettings() {
-  var s = { apiKey: '', cacheDays: 7, hideSpoilers: false, hideSensitive: false };
+  var s = { apiKey: '', serpApiKey: '', cacheDays: 7, hideSpoilers: false, hideSensitive: false };
   try {
     var raw = localStorage.getItem('settings');
     if (raw) {
@@ -151,6 +151,60 @@ function apiGet(path, apiKey, cb, timeoutMs) {
   req.send();
 }
 
+// Plain JSON GET (SerpApi, BigDataCloud) - no DDD headers. SerpApi / OMDb put a
+// helpful message in the body on 4xx.
+function httpGetJson(url, cb, timeoutMs) {
+  var req = new XMLHttpRequest();
+  req.open('GET', url, true);
+  req.timeout = timeoutMs || 20000;
+  req.onload = function () {
+    var body = null;
+    try { body = JSON.parse(req.responseText); } catch (e) {}
+    if (req.status >= 200 && req.status < 300) {
+      body ? cb(null, body) : cb('Unexpected response');
+    } else if (body && body.error) {
+      cb(body.error);
+    } else {
+      cb('Server error ' + req.status);
+    }
+  };
+  req.onerror = function () { cb('Network error'); };
+  req.ontimeout = function () { cb('Request timed out'); };
+  req.send();
+}
+
+// ---------------------------------------------------------------------------
+// Location + SerpApi (only used by the "in theaters near me" list)
+// ---------------------------------------------------------------------------
+
+function getLocation(cb) {
+  if (!navigator.geolocation) { cb('Location unavailable'); return; }
+  navigator.geolocation.getCurrentPosition(
+    function (pos) { cb(null, { lat: pos.coords.latitude, lon: pos.coords.longitude }); },
+    function (err) {
+      cb(err && err.code === 1 ? 'Location permission denied on phone' : 'Could not get location');
+    },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 5 * 60 * 1000 }
+  );
+}
+
+function reverseGeocode(lat, lon, cb) {
+  var url = 'https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' +
+    encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&localityLanguage=en';
+  httpGetJson(url, function (err, data) { cb(err ? null : P.locationString(data)); }, 10000);
+}
+
+function serpUrl(params, serpApiKey) {
+  var qs = [];
+  for (var k in params) {
+    if (params.hasOwnProperty(k) && params[k] != null && params[k] !== '') {
+      qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(params[k]));
+    }
+  }
+  qs.push('api_key=' + encodeURIComponent(serpApiKey));
+  return 'https://serpapi.com/search.json?' + qs.join('&');
+}
+
 // ---------------------------------------------------------------------------
 // Step 1: search for a title
 // ---------------------------------------------------------------------------
@@ -224,6 +278,79 @@ function doMedia(id, force) {
 }
 
 // ---------------------------------------------------------------------------
+// "In theaters near me": GPS -> nearest ~2 cinemas -> today's movies
+// ---------------------------------------------------------------------------
+
+var THEATERS_TTL_MS = 6 * 60 * 60 * 1000;
+var NEAREST_N = 2;
+
+function today() {
+  var d = new Date();
+  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+}
+
+function doTheaters(force) {
+  var s = loadSettings();
+  if (!s.serpApiKey) {
+    sendError('Add a SerpApi key in settings for the In Theaters list.');
+    return;
+  }
+
+  sendStatus('Finding cinemas near you');
+  getLocation(function (err, coords) {
+    if (err) { sendError(err); return; }
+
+    var key = 'theaters:' + coords.lat.toFixed(2) + ',' + coords.lon.toFixed(2) + ':' + today();
+    if (!force) {
+      var hit = cacheGet(key, THEATERS_TTL_MS);
+      if (hit != null) { sendToWatch({ RESULTS: hit }); return; }
+    }
+
+    reverseGeocode(coords.lat, coords.lon, function (city) {
+      var cityShort = city ? city.split(',')[0] : '';
+
+      var mapsUrl = serpUrl({
+        engine: 'google_maps', type: 'search', q: 'movie theater',
+        ll: '@' + coords.lat + ',' + coords.lon + ',13z', hl: 'en',
+      }, s.serpApiKey);
+
+      httpGetJson(mapsUrl, function (e2, data) {
+        if (e2) { sendError(e2); return; }
+        var cinemas = P.extractTheaters(data);
+        for (var i = 0; i < cinemas.length; i++) {
+          cinemas[i]._km = (cinemas[i].lat != null)
+            ? P.haversineKm(coords.lat, coords.lon, cinemas[i].lat, cinemas[i].lon) : 99999;
+        }
+        cinemas.sort(function (a, b) { return a._km - b._km; });
+        cinemas = cinemas.slice(0, NEAREST_N);
+        if (!cinemas.length) { sendError('No cinemas found near you.'); return; }
+
+        sendStatus("Today's showtimes");
+        var lists = [];
+        var pending = cinemas.length;
+
+        function done() {
+          var titles = P.dedupeTitles(lists, MAX_RESULTS);
+          if (!titles.length) { sendError('No showtimes listed nearby today.'); return; }
+          var payload = P.buildTheatersPayload(titles);
+          cacheSet(key, payload);
+          sendToWatch({ RESULTS: payload });
+        }
+
+        cinemas.forEach(function (c) {
+          var q = c.name + (cityShort ? ' ' + cityShort : '') + ' showtimes';
+          var url = serpUrl({ engine: 'google', q: q, hl: 'en', gl: 'us' }, s.serpApiKey);
+          httpGetJson(url, function (e3, d3) {
+            if (!e3 && d3) lists.push(P.extractMovieTitles(d3));
+            if (--pending === 0) done();
+          }, 15000);
+        });
+      });
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
@@ -241,6 +368,8 @@ Pebble.addEventListener('appmessage', function (e) {
     doSearch(d.QUERY, !!d.FORCE);
   } else if (d.REQUEST === 'media') {
     doMedia(d.MEDIA_ID, !!d.FORCE);
+  } else if (d.REQUEST === 'theaters') {
+    doTheaters(!!d.FORCE);
   } else if (d.REQUEST === 'recents') {
     sendRecents();
   }
@@ -258,9 +387,11 @@ Pebble.addEventListener('webviewclosed', function (e) {
   catch (err) { try { incoming = JSON.parse(e.response); } catch (e2) { return; } }
 
   var s = loadSettings();
-  var keyChanged = incoming.apiKey !== undefined && incoming.apiKey !== s.apiKey;
+  var keyChanged = incoming.apiKey !== undefined && String(incoming.apiKey).trim() !== s.apiKey;
+  var serpChanged = incoming.serpApiKey !== undefined && String(incoming.serpApiKey).trim() !== s.serpApiKey;
 
   if (incoming.apiKey !== undefined) s.apiKey = String(incoming.apiKey).trim();
+  if (incoming.serpApiKey !== undefined) s.serpApiKey = String(incoming.serpApiKey).trim();
   if (incoming.cacheDays !== undefined) {
     var cd = parseInt(incoming.cacheDays, 10);
     if (cd === 1 || cd === 3 || cd === 7) s.cacheDays = cd;
@@ -270,6 +401,7 @@ Pebble.addEventListener('webviewclosed', function (e) {
   saveSettings(s);
 
   if (keyChanged) clearCache();
+  else if (serpChanged) clearCache();  // drops the theaters:* entries too
 
   // The "search a title" box on the config page is the no-microphone path.
   var typed = incoming.search && String(incoming.search).trim();

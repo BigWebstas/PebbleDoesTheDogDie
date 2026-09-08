@@ -5,6 +5,10 @@
 #define REC_SEP  '\x1e'   // between records
 #define FLD_SEP  '\x1f'   // between fields in a record
 
+// g_query sentinel while the results screen holds the "in theaters" movie list
+// (rather than DDD search hits); used for the error-retry path.
+#define THEATERS_QUERY "In theaters"
+
 #define MAX_RESULTS   12   // search hits shown on the watch
 #define MAX_RECENTS   8    // recent titles on the home screen
 #define MAX_TOPICS    16   // triggers shown for one title
@@ -62,6 +66,7 @@ extern char     g_error_msg[128];  // doubles as the "loading..." status line
 void request_search(const char *query);
 void request_media(int media_id, const char *name);
 void request_recents(void);
+void request_theaters(void);   // GPS -> nearby cinemas -> today's movies
 void dictation_start(void);   // no-op where there is no microphone
 
 // --- windows ---
