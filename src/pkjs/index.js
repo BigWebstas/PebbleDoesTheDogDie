@@ -13,9 +13,11 @@ var configPage = require('./config_page');
 var MAX_RESULTS = 12;
 var MAX_TOPICS = 16;
 var MAX_RECENTS = 8;
+var MAX_BROWSE_TOPICS = 48;
 
 var API_BASE = 'https://www.doesthedogdie.com';
 var DAY_MS = 24 * 60 * 60 * 1000;
+var TAXONOMY_TTL_MS = 30 * DAY_MS;
 
 var state = { lastSearchAt: 0 };
 
@@ -151,6 +153,27 @@ function apiGet(path, apiKey, cb, timeoutMs) {
   req.send();
 }
 
+// doesthedogdie.com v3 API (documented, X-API-KEY, no Accept header). Used for
+// the trigger taxonomy - the old /dddsearch + /media endpoints have no such
+// data. Free tier is 30 req/min, 5000/month, non-commercial.
+function v3Get(path, apiKey, cb, timeoutMs) {
+  var req = new XMLHttpRequest();
+  req.open('GET', API_BASE + path, true);
+  if (apiKey) req.setRequestHeader('X-API-KEY', apiKey);
+  req.timeout = timeoutMs || 20000;
+  req.onload = function () {
+    var body = null;
+    try { body = JSON.parse(req.responseText); } catch (e) {}
+    if (req.status >= 200 && req.status < 300 && body) cb(null, body);
+    else if (req.status === 401 || req.status === 403) cb('API key rejected or tier too low.');
+    else if (req.status === 429) cb('Rate limited. Wait a minute.');
+    else cb('Server error ' + req.status);
+  };
+  req.onerror = function () { cb('Network error'); };
+  req.ontimeout = function () { cb('Request timed out'); };
+  req.send();
+}
+
 // Plain JSON GET (SerpApi, BigDataCloud) - no DDD headers. SerpApi / OMDb put a
 // helpful message in the body on 4xx.
 function httpGetJson(url, cb, timeoutMs) {
@@ -239,6 +262,22 @@ function doSearch(query, force) {
 // Step 2: triggers for one title
 // ---------------------------------------------------------------------------
 
+// Cache the raw stats + meta (not the built payload) so starring a trigger or
+// changing the spoiler filters takes effect without re-fetching.
+function emitTopics(stats, meta, s) {
+  var payload = P.buildTopicsPayload(stats, {
+    hideSpoilers: s.hideSpoilers,
+    hideSensitive: s.hideSensitive,
+    starred: starredGet(),
+    max: MAX_TOPICS,
+  });
+  if (!payload) { sendError('No trigger votes yet for this title.'); return false; }
+  recentsPush(meta);
+  sendToWatch({ TOPICS: payload });
+  sendRecents();
+  return true;
+}
+
 function doMedia(id, force) {
   var s = loadSettings();
   id = parseInt(id, 10);
@@ -249,10 +288,8 @@ function doMedia(id, force) {
   var ttl = (s.cacheDays || 7) * DAY_MS;
   if (!force) {
     var hit = cacheGet(key, ttl);
-    if (hit != null) {
-      recentsPush(hit.meta);
-      sendToWatch({ TOPICS: hit.payload });
-      sendRecents();
+    if (hit != null && hit.stats) {
+      emitTopics(hit.stats, hit.meta, s);
       return;
     }
   }
@@ -261,19 +298,9 @@ function doMedia(id, force) {
   apiGet('/media/' + id, s.apiKey, function (err, data) {
     if (err) { sendError(err); return; }
     var stats = (data && data.topicItemStats) || [];
-    var payload = P.buildTopicsPayload(stats, {
-      hideSpoilers: s.hideSpoilers,
-      hideSensitive: s.hideSensitive,
-      max: MAX_TOPICS,
-    });
-    if (!payload) { sendError('No trigger votes yet for this title.'); return; }
-
     var item = (data && data.item) || {};
     var meta = { id: id, name: item.name || '', year: item.releaseYear || '' };
-    cacheSet(key, { payload: payload, meta: meta });
-    recentsPush(meta);
-    sendToWatch({ TOPICS: payload });
-    sendRecents();
+    if (emitTopics(stats, meta, s)) cacheSet(key, { stats: stats, meta: meta });
   });
 }
 
@@ -351,6 +378,91 @@ function doTheaters(force) {
 }
 
 // ---------------------------------------------------------------------------
+// Trigger browser: v3 taxonomy + starred triggers
+// ---------------------------------------------------------------------------
+
+function starredGet() {
+  try { return JSON.parse(localStorage.getItem('starred')) || []; }
+  catch (e) { return []; }
+}
+
+function starToggle(topicId, on) {
+  topicId = parseInt(topicId, 10);
+  if (!topicId) return;
+  var list = starredGet().filter(function (id) { return id !== topicId; });
+  if (on) list.push(topicId);
+  try { localStorage.setItem('starred', JSON.stringify(list)); } catch (e) {}
+}
+
+// { cats:[{id,name}], topics:[{id,doesName,notName,description,catIds:[...]}] }
+// cached 30 days - the taxonomy barely changes.
+function loadTaxonomy(apiKey, cb) {
+  var hit = cacheGet('taxonomy:v1', TAXONOMY_TTL_MS);
+  if (hit) { cb(null, hit); return; }
+
+  v3Get('/api/v3/topiccategories', apiKey, function (e1, cats) {
+    if (e1) { cb(e1); return; }
+    v3Get('/api/v3/topics', apiKey, function (e2, topics) {
+      if (e2) { cb(e2); return; }
+      var tax = {
+        cats: (cats || []).map(function (c) { return { id: c.id, name: c.name }; }),
+        topics: (topics || []).map(function (t) {
+          return {
+            id: t.id,
+            doesName: t.doesName || t.name,
+            name: t.name,
+            notName: t.notName || '',
+            description: t.description || '',
+            catIds: P.topicCatIds(t),
+          };
+        }),
+      };
+      cacheSet('taxonomy:v1', tax);
+      cb(null, tax);
+    });
+  });
+}
+
+function doBrowseCats(force) {
+  var s = loadSettings();
+  if (!s.apiKey) { sendError('Add your API key in settings.'); return; }
+  if (force) clearCache();
+  sendStatus('Loading categories');
+  loadTaxonomy(s.apiKey, function (err, tax) {
+    if (err) { sendError(err); return; }
+    sendToWatch({ CATS: P.buildCatsPayload(tax.cats) });
+  });
+}
+
+function doBrowseTopics(catId) {
+  var s = loadSettings();
+  catId = parseInt(catId, 10);
+  if (!s.apiKey) { sendError('Add your API key in settings.'); return; }
+  sendStatus('Loading triggers');
+  loadTaxonomy(s.apiKey, function (err, tax) {
+    if (err) { sendError(err); return; }
+    var inCat = tax.topics.filter(function (t) { return t.catIds.indexOf(catId) >= 0; });
+    var payload = P.buildBrowseTopicsPayload(inCat, starredGet(), MAX_BROWSE_TOPICS);
+    if (!payload) { sendError('No triggers in this category.'); return; }
+    sendToWatch({ BROWSE_TOPICS: payload });
+  });
+}
+
+function doBrowseTopic(topicId) {
+  var s = loadSettings();
+  topicId = parseInt(topicId, 10);
+  loadTaxonomy(s.apiKey, function (err, tax) {
+    if (err) { sendError(err); return; }
+    var t = null;
+    for (var i = 0; i < tax.topics.length; i++) {
+      if (tax.topics[i].id === topicId) { t = tax.topics[i]; break; }
+    }
+    if (!t) { sendError('Trigger not found.'); return; }
+    sendToWatch({ TOPIC_DETAIL: P.topicDetailPayload(t) });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 
@@ -372,6 +484,14 @@ Pebble.addEventListener('appmessage', function (e) {
     doTheaters(!!d.FORCE);
   } else if (d.REQUEST === 'recents') {
     sendRecents();
+  } else if (d.REQUEST === 'browse_cats') {
+    doBrowseCats(!!d.FORCE);
+  } else if (d.REQUEST === 'browse_topics') {
+    doBrowseTopics(d.PARENT_ID);
+  } else if (d.REQUEST === 'browse_topic') {
+    doBrowseTopic(d.TOPIC_ID);
+  } else if (d.REQUEST === 'star') {
+    starToggle(d.TOPIC_ID, d.STAR === 1);
   }
 });
 

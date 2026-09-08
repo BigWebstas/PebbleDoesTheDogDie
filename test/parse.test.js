@@ -163,4 +163,54 @@ t('buildTheatersPayload emits zero-id records', function () {
   assert.deepStrictEqual(recs[0].split(FLD), ['0', 'Dune: Part Two', '', 'In theaters']);
 });
 
+// --- trigger browser --------------------------------------------------
+t('buildCatsPayload sorts by name', function () {
+  var payload = P.buildCatsPayload([{ id: 22, name: 'Violence' }, { id: 2, name: 'Animal' }]);
+  assert.deepStrictEqual(payload.split(REC).map(function (r) { return r.split(FLD); }),
+    [['2', 'Animal'], ['22', 'Violence']]);
+});
+t('topicCatIds returns primary and distinct alt', function () {
+  assert.deepStrictEqual(P.topicCatIds({ topicCategoryId: 56, altTopicCategoryId: 22 }), [56, 22]);
+  assert.deepStrictEqual(P.topicCatIds({ topicCategoryId: 56, altTopicCategoryId: 56 }), [56]);
+  assert.deepStrictEqual(P.topicCatIds({ topicCategoryId: 56 }), [56]);
+});
+t('buildBrowseTopicsPayload sorts, marks starred, caps', function () {
+  var topics = [
+    { id: 153, doesName: 'Does the dog die' },
+    { id: 10, doesName: 'Does a child die' },
+    { id: 99, doesName: 'Does a clown appear' },
+  ];
+  var payload = P.buildBrowseTopicsPayload(topics, [153], 5);
+  var recs = payload.split(REC).map(function (r) { return r.split(FLD); });
+  assert.deepStrictEqual(recs, [
+    ['10', 'Does a child die', '0'],
+    ['99', 'Does a clown appear', '0'],
+    ['153', 'Does the dog die', '1'],
+  ]);
+  assert.strictEqual(P.buildBrowseTopicsPayload(topics, [], 2).split(REC).length, 2);
+});
+t('topicDetailPayload shape', function () {
+  var f = P.topicDetailPayload({ doesName: 'Does the dog die', notName: 'no dogs die',
+    description: 'For people upset by canine death.' }).split(FLD);
+  assert.deepStrictEqual(f, ['Does the dog die', 'no dogs die', 'For people upset by canine death.']);
+});
+
+// --- starred triggers in a title's list ------------------------------
+t('buildTopicsPayload marks and floats starred triggers', function () {
+  var stats = [
+    { yesSum: 5, noSum: 1, comment: '', topic: { id: 10, doesName: 'Does a child die' } },
+    { yesSum: 2, noSum: 40, comment: '', topic: { id: 153, doesName: 'Does the dog die' } },
+  ];
+  var payload = P.buildTopicsPayload(stats, { starred: [153] });
+  var recs = payload.split(REC).map(function (r) { return r.split(FLD); });
+  assert.strictEqual(recs[0][1], 'Does the dog die');   // starred floated up
+  assert.strictEqual(recs[0][5], '1');
+  assert.strictEqual(recs[1][5], '0');
+});
+t('topicIdOf reads nested or flat id', function () {
+  assert.strictEqual(P.topicIdOf({ topic: { id: 7 } }), 7);
+  assert.strictEqual(P.topicIdOf({ TopicId: 8 }), 8);
+  assert.strictEqual(P.topicIdOf({ topicId: 9 }), 9);
+});
+
 console.log('\n' + pass + ' passing');

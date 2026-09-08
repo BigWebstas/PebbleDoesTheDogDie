@@ -85,6 +85,8 @@ function buildConfigPage(settings) {
     '</div>' +
 
     '<button id="save">Save</button>' +
+    '<p class="hint" style="text-align:center;margin-top:14px">' +
+    '<a href="https://www.doesthedogdie.com">Powered by DoesTheDogDie.com</a></p>' +
     '</div><script>' +
     'document.getElementById("save").addEventListener("click",function(){' +
     'var out={apiKey:document.getElementById("key").value.trim(),' +

@@ -5,6 +5,7 @@
 static Window *s_window;
 static MenuLayer *s_menu;
 static StatusBarLayer *s_status;
+static TextLayer *s_attrib;
 
 static bool is_list_ready(void) {
   return g_state == STATE_RESULTS && g_results_count > 0;
@@ -98,6 +99,7 @@ static void window_load(Window *window) {
   menu_frame.origin.y += STATUS_BAR_LAYER_HEIGHT;
   menu_frame.size.h -= STATUS_BAR_LAYER_HEIGHT;
 #endif
+  menu_frame.size.h -= ATTRIB_HEIGHT;
 
   s_menu = menu_layer_create(menu_frame);
   menu_layer_set_callbacks(s_menu, NULL, (MenuLayerCallbacks) {
@@ -116,11 +118,13 @@ static void window_load(Window *window) {
 
   layer_add_child(root, menu_layer_get_layer(s_menu));
   layer_add_child(root, status_bar_layer_get_layer(s_status));
+  s_attrib = ui_add_attribution(window);
 }
 
 static void window_unload(Window *window) {
   menu_layer_destroy(s_menu);
   status_bar_layer_destroy(s_status);
+  text_layer_destroy(s_attrib);
   window_destroy(window);
   s_window = NULL;
   s_menu = NULL;

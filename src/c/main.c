@@ -17,6 +17,18 @@ int    g_topics_count = 0;
 int    g_media_id = 0;
 char   g_media_name[TITLE_LEN] = {0};
 
+Cat         g_cats[MAX_CATS];
+int         g_cat_count = 0;
+BrowseTopic g_browse_topics[MAX_BROWSE_TOPICS];
+int         g_browse_topic_count = 0;
+int         g_browse_cat_id = 0;
+char        g_browse_cat_name[CAT_NAME_LEN] = {0};
+int         g_def_topic_id = 0;
+char        g_def_does[QUESTION_LEN] = {0};
+char        g_def_not[QUESTION_LEN] = {0};
+char        g_def_body[DEF_LEN] = {0};
+bool        g_def_ready = false;
+
 AppState g_state = STATE_START;
 char     g_error_msg[128] = {0};
 
@@ -97,6 +109,7 @@ static void handle_topic(const char *rec_start, const char *rec_end, int index) 
   Topic *t = &g_topics[index];
   t->verdict = '?';
   t->question[0] = t->yes[0] = t->no[0] = t->comment[0] = '\0';
+  t->starred = false;
 
   const char *cur = rec_start;
   const char *fs, *fe;
@@ -109,6 +122,37 @@ static void handle_topic(const char *rec_start, const char *rec_end, int index) 
   if (next_field(&cur, rec_end, &fs, &fe)) copy_field(t->yes, COUNT_LEN, fs, fe);
   if (next_field(&cur, rec_end, &fs, &fe)) copy_field(t->no, COUNT_LEN, fs, fe);
   if (next_field(&cur, rec_end, &fs, &fe)) copy_field(t->comment, COMMENT_LEN, fs, fe);
+  char sbuf[4] = {0};
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(sbuf, sizeof(sbuf), fs, fe);
+  t->starred = (sbuf[0] == '1');
+}
+
+static void handle_cat(const char *rec_start, const char *rec_end, int index) {
+  Cat *c = &g_cats[index];
+  c->id = 0;
+  c->name[0] = '\0';
+  const char *cur = rec_start;
+  const char *fs, *fe;
+  char idbuf[12] = {0};
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(idbuf, sizeof(idbuf), fs, fe);
+  c->id = atoi(idbuf);
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(c->name, CAT_NAME_LEN, fs, fe);
+}
+
+static void handle_browse_topic(const char *rec_start, const char *rec_end, int index) {
+  BrowseTopic *b = &g_browse_topics[index];
+  b->id = 0;
+  b->question[0] = '\0';
+  b->starred = false;
+  const char *cur = rec_start;
+  const char *fs, *fe;
+  char idbuf[12] = {0};
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(idbuf, sizeof(idbuf), fs, fe);
+  b->id = atoi(idbuf);
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(b->question, QUESTION_LEN, fs, fe);
+  char sbuf[4] = {0};
+  if (next_field(&cur, rec_end, &fs, &fe)) copy_field(sbuf, sizeof(sbuf), fs, fe);
+  b->starred = (sbuf[0] == '1');
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +163,8 @@ static void reload_all(void) {
   search_window_reload();
   results_window_reload();
   topics_window_reload();
+  browse_window_reload();
+  topic_detail_window_reload();
 }
 
 static void set_status(const char *msg) {
@@ -168,6 +214,41 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     g_error_msg[0] = '\0';
     topics_window_reload();
   }
+
+  Tuple *cats = dict_find(iter, MESSAGE_KEY_CATS);
+  if (cats && cats->type == TUPLE_CSTRING) {
+    watchdog_stop();
+    g_cat_count = parse_records(cats->value->cstring, MAX_CATS, handle_cat);
+    g_state = STATE_BROWSE;
+    g_error_msg[0] = '\0';
+    browse_window_reload();
+  }
+
+  Tuple *btopics = dict_find(iter, MESSAGE_KEY_BROWSE_TOPICS);
+  if (btopics && btopics->type == TUPLE_CSTRING) {
+    watchdog_stop();
+    g_browse_topic_count = parse_records(btopics->value->cstring, MAX_BROWSE_TOPICS,
+                                         handle_browse_topic);
+    g_state = STATE_BROWSE;
+    g_error_msg[0] = '\0';
+    browse_window_reload();
+  }
+
+  Tuple *tdet = dict_find(iter, MESSAGE_KEY_TOPIC_DETAIL);
+  if (tdet && tdet->type == TUPLE_CSTRING) {
+    watchdog_stop();
+    const char *p = tdet->value->cstring;
+    const char *end = p + strlen(p);
+    const char *cur = p;
+    const char *fs, *fe;
+    g_def_does[0] = g_def_not[0] = g_def_body[0] = '\0';
+    if (next_field(&cur, end, &fs, &fe)) copy_field(g_def_does, QUESTION_LEN, fs, fe);
+    if (next_field(&cur, end, &fs, &fe)) copy_field(g_def_not, QUESTION_LEN, fs, fe);
+    if (next_field(&cur, end, &fs, &fe)) copy_field(g_def_body, DEF_LEN, fs, fe);
+    g_def_ready = true;
+    g_state = STATE_BROWSE;
+    topic_detail_window_reload();
+  }
 }
 
 static void inbox_dropped(AppMessageResult reason, void *context) {
@@ -189,7 +270,8 @@ static AppTimer *s_watchdog = NULL;
 
 static void watchdog_fire(void *ctx) {
   s_watchdog = NULL;
-  if (g_state == STATE_LOADING_SEARCH || g_state == STATE_LOADING_TOPICS) {
+  if (g_state == STATE_LOADING_SEARCH || g_state == STATE_LOADING_TOPICS ||
+      g_state == STATE_LOADING_BROWSE) {
     g_state = STATE_ERROR;
     snprintf(g_error_msg, sizeof(g_error_msg), "No response from phone.\nTry again.");
     reload_all();
@@ -268,6 +350,68 @@ void request_theaters(void) {
   dict_write_int32(out, MESSAGE_KEY_FORCE, 0);
   app_message_outbox_send();
   watchdog_start();
+}
+
+// ---------------------------------------------------------------------------
+// Trigger browser
+// ---------------------------------------------------------------------------
+
+void request_browse_cats(void) {
+  g_browse_cat_id = 0;
+  g_browse_cat_name[0] = '\0';
+  g_state = STATE_LOADING_BROWSE;
+  g_error_msg[0] = '\0';
+  g_cat_count = 0;
+  browse_window_reload();
+
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_REQUEST, "browse_cats");
+  app_message_outbox_send();
+  watchdog_start();
+}
+
+void request_browse_topics(int cat_id, const char *cat_name) {
+  g_browse_cat_id = cat_id;
+  strncpy(g_browse_cat_name, cat_name ? cat_name : "", CAT_NAME_LEN - 1);
+  g_browse_cat_name[CAT_NAME_LEN - 1] = '\0';
+  g_state = STATE_LOADING_BROWSE;
+  g_error_msg[0] = '\0';
+  g_browse_topic_count = 0;
+  browse_window_reload();
+
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_REQUEST, "browse_topics");
+  dict_write_int32(out, MESSAGE_KEY_PARENT_ID, cat_id);
+  app_message_outbox_send();
+  watchdog_start();
+}
+
+void request_browse_topic(int topic_id) {
+  g_def_topic_id = topic_id;
+  g_def_ready = false;
+  g_state = STATE_LOADING_BROWSE;
+  g_error_msg[0] = '\0';
+  topic_detail_window_reload();
+
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_REQUEST, "browse_topic");
+  dict_write_int32(out, MESSAGE_KEY_TOPIC_ID, topic_id);
+  app_message_outbox_send();
+  watchdog_start();
+}
+
+// Fire-and-forget: the watch flips its own star flag immediately, the phone
+// just persists the change.
+void request_star(int topic_id, bool on) {
+  DictionaryIterator *out;
+  if (app_message_outbox_begin(&out) != APP_MSG_OK) return;
+  dict_write_cstring(out, MESSAGE_KEY_REQUEST, "star");
+  dict_write_int32(out, MESSAGE_KEY_TOPIC_ID, topic_id);
+  dict_write_int32(out, MESSAGE_KEY_STAR, on ? 1 : 0);
+  app_message_outbox_send();
 }
 
 // ---------------------------------------------------------------------------

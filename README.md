@@ -8,6 +8,9 @@ straight from your wrist, backed by the crowd database at
   the title on the phone settings page instead.
 - **In theaters near me.** GPS finds nearby cinemas and lists today's movies;
   tap one to see its triggers. Needs a free SerpApi key.
+- **Browse triggers.** Drill the doesthedogdie.com trigger taxonomy by category,
+  read each one's definition, and **star** the ones you care about — starred
+  triggers pin to the top of every title's list with a ★.
 - **Trigger list.** Every tracked trigger for the title with the crowd's
   verdict — **Yes** / **No** / **Unclear** — and the vote tally. On colour
   watches a "yes" is tinted red, a "no" green.
@@ -15,7 +18,10 @@ straight from your wrist, backed by the crowd database at
   top-voted comment.
 - **Recents.** Your last few lookups sit on the home screen.
 
-Runs on every Pebble platform: aplite, basalt, chalk, diorite, emery, gabbro.
+Runs on basalt, chalk, diorite, emery, and gabbro. (The original aplite Pebble
+is not supported — no microphone, and too little RAM for the trigger browser.)
+
+Content and trigger data are Powered by DoesTheDogDie.com.
 
 ## Setup
 

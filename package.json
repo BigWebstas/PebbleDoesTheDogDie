@@ -11,7 +11,6 @@
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
-      "aplite",
       "basalt",
       "chalk",
       "diorite",
@@ -34,7 +33,13 @@
       "RESULTS",
       "RECENTS",
       "TOPICS",
-      "ERROR"
+      "ERROR",
+      "PARENT_ID",
+      "TOPIC_ID",
+      "STAR",
+      "CATS",
+      "BROWSE_TOPICS",
+      "TOPIC_DETAIL"
     ],
     "resources": {
       "media": [

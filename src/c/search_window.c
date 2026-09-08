@@ -16,10 +16,11 @@ static const char *VOICE_TITLE = "Search from phone";
 static const char *VOICE_SUB   = "This watch has no mic - use the app settings";
 #endif
 
-// Row 0 = voice search, row 1 = "in theaters near me", rows 2.. = recent titles.
+// Row 0 = voice, 1 = "in theaters near me", 2 = "browse triggers", 3.. = recents.
 #define ROW_VOICE     0
 #define ROW_THEATERS  1
-#define ROW_RECENT_0  2
+#define ROW_BROWSE    2
+#define ROW_RECENT_0  3
 
 static uint16_t get_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
   return ROW_RECENT_0 + g_recents_count;
@@ -41,6 +42,11 @@ static void draw_row(GContext *gctx, const Layer *cell_layer, MenuIndex *idx, vo
   if (idx->row == ROW_THEATERS) {
     menu_cell_basic_draw(gctx, cell_layer, "In theaters near me",
                          "Today's movies nearby", NULL);
+    return;
+  }
+  if (idx->row == ROW_BROWSE) {
+    menu_cell_basic_draw(gctx, cell_layer, "Browse triggers",
+                         "By category", NULL);
     return;
   }
 
@@ -71,6 +77,11 @@ static void select_row(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   if (idx->row == ROW_THEATERS) {
     request_theaters();
     results_window_push();
+    return;
+  }
+  if (idx->row == ROW_BROWSE) {
+    request_browse_cats();
+    browse_window_push();
     return;
   }
   int r = idx->row - ROW_RECENT_0;

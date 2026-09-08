@@ -90,11 +90,12 @@ function buildRecentsPayload(list) {
   return out.join(REC);
 }
 
-// Sort: things that happen first (highest confidence), then inconclusive, then
-// things that don't happen (highest confidence last within their group).
+// Sort: starred triggers first; then things that happen (highest confidence),
+// then inconclusive, then things that don't happen.
 function sortTopics(stats) {
   var rank = { 'Y': 0, '?': 1, 'N': 2 };
   return (stats || []).slice().sort(function (a, b) {
+    if (!!a._starred !== !!b._starred) return a._starred ? -1 : 1;
     var va = verdictFor(a.yesSum, a.noSum);
     var vb = verdictFor(b.yesSum, b.noSum);
     if (rank[va] !== rank[vb]) return rank[va] - rank[vb];
@@ -105,14 +106,20 @@ function sortTopics(stats) {
   });
 }
 
-// /media topicItemStats -> "verdict \x1f question \x1f yes \x1f no \x1f comment"
+function topicIdOf(s) {
+  return (s.topic && s.topic.id) || s.TopicId || s.topicId || 0;
+}
+
+// /media topicItemStats -> "verdict \x1f question \x1f yes \x1f no \x1f comment \x1f starred"
 //   opts.hideSpoilers   - drop topics flagged isSpoiler
 //   opts.hideSensitive  - drop topics flagged isSensitive
+//   opts.starred        - array of starred topic ids (pinned to the top, marked ★)
 //   opts.max            - cap the number of rows
 // Returns '' when nothing survives (caller shows "no trigger info").
 function buildTopicsPayload(stats, opts) {
   opts = opts || {};
   var max = opts.max || 16;
+  var starred = opts.starred || [];
 
   var kept = (stats || []).filter(function (s) {
     if (!s || !s.topic) return false;
@@ -123,6 +130,7 @@ function buildTopicsPayload(stats, opts) {
     return stripToInt(s.yesSum) + stripToInt(s.noSum) > 0;
   });
 
+  kept.forEach(function (s) { s._starred = starred.indexOf(topicIdOf(s)) >= 0; });
   kept = sortTopics(kept).slice(0, max);
 
   var out = [];
@@ -134,9 +142,59 @@ function buildTopicsPayload(stats, opts) {
       stripToInt(s.yesSum),
       stripToInt(s.noSum),
       clamp(s.comment || '', COMMENT_MAX),
+      s._starred ? '1' : '0',
     ].join(FLD));
   }
   return out.join(REC);
+}
+
+// ---------------------------------------------------------------------------
+// Trigger browser (v3 /api/v3/topics + /api/v3/topiccategories)
+// ---------------------------------------------------------------------------
+
+// [{id,name}] -> "id \x1f name" records, sorted by name
+function buildCatsPayload(cats) {
+  return (cats || []).slice()
+    .sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); })
+    .map(function (c) { return [c.id, sanitize(c.name).slice(0, 38)].join(FLD); })
+    .join(REC);
+}
+
+// topics for one category -> "topicId \x1f doesName \x1f starred" records
+function buildBrowseTopicsPayload(topics, starredSet, max) {
+  max = max || 48;
+  var set = {};
+  (starredSet || []).forEach(function (id) { set[id] = true; });
+  return (topics || []).slice()
+    .sort(function (a, b) {
+      return String(a.doesName || a.name).localeCompare(String(b.doesName || b.name));
+    })
+    .slice(0, max)
+    .map(function (t) {
+      var q = sanitize(t.doesName || t.name || '').slice(0, 42);
+      return [t.id, q, set[t.id] ? '1' : '0'].join(FLD);
+    })
+    .join(REC);
+}
+
+// one topic -> "doesName \x1f notName \x1f description"
+function topicDetailPayload(topic) {
+  topic = topic || {};
+  return [
+    sanitize(topic.doesName || topic.name || 'Trigger').slice(0, 42),
+    sanitize(topic.notName || '').slice(0, 42),
+    clamp(topic.description || '', 300),
+  ].join(FLD);
+}
+
+// Which category ids a topic belongs to (primary + alt).
+function topicCatIds(t) {
+  var ids = [];
+  if (t.topicCategoryId != null) ids.push(t.topicCategoryId);
+  if (t.altTopicCategoryId != null && t.altTopicCategoryId !== t.topicCategoryId) {
+    ids.push(t.altTopicCategoryId);
+  }
+  return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +334,11 @@ module.exports = {
   buildResultsPayload: buildResultsPayload,
   buildRecentsPayload: buildRecentsPayload,
   buildTopicsPayload: buildTopicsPayload,
+  topicIdOf: topicIdOf,
+  buildCatsPayload: buildCatsPayload,
+  buildBrowseTopicsPayload: buildBrowseTopicsPayload,
+  topicDetailPayload: topicDetailPayload,
+  topicCatIds: topicCatIds,
   haversineKm: haversineKm,
   looksLikeCinema: looksLikeCinema,
   extractTheaters: extractTheaters,
