@@ -1,0 +1,54 @@
+{
+  "name": "pebble-does-the-dog-die",
+  "author": "BW",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Does the Dog Die?",
+    "uuid": "bbfc255e-798a-4f2d-864c-4a7b10387812",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "capabilities": [
+      "configurable"
+    ],
+    "messageKeys": [
+      "REQUEST",
+      "QUERY",
+      "MEDIA_ID",
+      "FORCE",
+      "STATUS",
+      "RESULTS",
+      "RECENTS",
+      "TOPICS",
+      "ERROR"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_LOGO",
+          "file": "images/logo.png"
+        }
+      ]
+    }
+  }
+}
